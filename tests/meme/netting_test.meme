@@ -1,0 +1,58 @@
+# netting_test.meme — multi-expense and payment netting
+use split_logic
+
+test multi_expense_netting:
+    define no_ints: List<Int> as empty List<Int>
+    # ann paid 100 for ann+bob (equal: 50/50); bob paid 60 for ann+bob
+    # (equal: 30/30). Net: ann +100-50-30 = +20; bob -50+60-30 = -20,
+    # i.e. ann is owed 20 by bob.
+    define e1: Expense as Expense(id=1, payer="ann", total=100, mode="equal", participants=["ann", "bob"], exact=no_ints, shares=no_ints)
+    define e2: Expense as Expense(id=2, payer="bob", total=60, mode="equal", participants=["ann", "bob"], exact=no_ints, shares=no_ints)
+    define es: List<Expense> as [e1, e2]
+    define ps: List<Payment> as empty List<Payment>
+    define net: Map<String, Int> as compute_balances(es, ps)
+    define a: Int as net["ann"] default 0
+    define b: Int as net["bob"] default 0
+    assert a == 20
+    assert b == -20
+
+test payments_offset_expenses:
+    define no_ints: List<Int> as empty List<Int>
+    # ann paid 100 for ann+bob (ann +50, bob -50). Settlement payment
+    # bob pays ann 10: bob owes less (net[bob] +10), ann is owed less
+    # (net[ann] -10). Net: ann +40, bob -40.
+    define e1: Expense as Expense(id=1, payer="ann", total=100, mode="equal", participants=["ann", "bob"], exact=no_ints, shares=no_ints)
+    define es: List<Expense> as [e1]
+    define p1: Payment as Payment(id=2, from_p="bob", to_p="ann", cents=10)
+    define ps: List<Payment> as [p1]
+    define net: Map<String, Int> as compute_balances(es, ps)
+    define a: Int as net["ann"] default 0
+    define b: Int as net["bob"] default 0
+    assert a == 40
+    assert b == -40
+
+test balances_sum_to_zero:
+    define no_ints: List<Int> as empty List<Int>
+    # Money is conserved: net balances must always sum to exactly zero.
+    define e1: Expense as Expense(id=1, payer="ann", total=120, mode="exact", participants=["ann", "bob", "cyd"], exact=[60, 40, 20], shares=no_ints)
+    define e2: Expense as Expense(id=2, payer="bob", total=101, mode="shares", participants=["ann", "bob", "cyd"], exact=no_ints, shares=[1, 1, 2])
+    define p1: Payment as Payment(id=3, from_p="cyd", to_p="ann", cents=7)
+    define es: List<Expense> as [e1, e2]
+    define ps: List<Payment> as [p1]
+    define net: Map<String, Int> as compute_balances(es, ps)
+    define total: Int as 0
+    for each k in net:
+        define v: Int as net[k] default 0
+        add v to total
+    assert total == 0
+
+test balances_map_sorted_key_order:
+    define no_ints: List<Int> as empty List<Int>
+    define e1: Expense as Expense(id=1, payer="zoe", total=3000, mode="equal", participants=["zoe", "amy", "mia"], exact=no_ints, shares=no_ints)
+    define es: List<Expense> as [e1]
+    define ps: List<Payment> as empty List<Payment>
+    define net: Map<String, Int> as compute_balances(es, ps)
+    define lines: List<String> as balance_lines(net)
+    assert lines[0] == "amy -10.00"
+    assert lines[1] == "mia -10.00"
+    assert lines[2] == "zoe 20.00"

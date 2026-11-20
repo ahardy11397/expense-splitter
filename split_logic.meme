@@ -1,0 +1,313 @@
+# split_logic.meme — shared-expense splitter logic.
+# Pure module: records + functions only (no top-level statements).
+# All money is integer cents. Display strings are built with integer
+# arithmetic only (money/1) — no floats anywhere.
+
+record Person:
+    name: String
+
+record Expense:
+    id: Int
+    payer: String
+    total: Int
+    mode: String
+    participants: List<String>
+    exact: List<Int>
+    shares: List<Int>
+
+record Payment:
+    id: Int
+    from_p: String
+    to_p: String
+    cents: Int
+
+record Transfer:
+    from_p: String
+    to_p: String
+    cents: Int
+
+# JSON record I/O only supports primitive fields, so Expense persists as a
+# primitive-only row with CSV-encoded lists; Payment and Person are
+# primitive-only already.
+record ExpenseRow:
+    id: Int
+    payer: String
+    total: Int
+    mode: String
+    participants: String
+    exact: String
+    shares: String
+
+function join_ints(parts: List<Int>) -> String:
+    define out: String as ""
+    for each index i item c in parts:
+        if i > 0:
+            set out to out + ","
+        set out to out + text of c
+    return out
+
+function split_ints(text: String) -> List<Int>:
+    define out: List<Int> as empty List<Int>
+    if length of string text == 0:
+        return out
+    define parts: List<String> as split text by ","
+    for each p in parts:
+        add integer value of p to out
+    return out
+
+function to_row(e: Expense) -> ExpenseRow:
+    define participants: List<String> as e.participants
+    define ps: String as join participants with ","
+    return ExpenseRow(id=e.id, payer=e.payer, total=e.total, mode=e.mode, participants=ps, exact=join_ints(e.exact), shares=join_ints(e.shares))
+
+function from_row(r: ExpenseRow) -> Expense:
+    define ps: List<String> as split r.participants by ","
+    return Expense(id=r.id, payer=r.payer, total=r.total, mode=r.mode, participants=ps, exact=split_ints(r.exact), shares=split_ints(r.shares))
+
+# ---------- display ----------
+
+function money(cents: Int) -> String:
+    define neg: Bool as cents < 0
+    define abs_c: Int as cents
+    if neg:
+        set abs_c to -cents
+    define d: Int as abs_c / 100
+    define rem: Int as abs_c % 100
+    define rem_s: String as text of rem
+    if rem < 10:
+        set rem_s to "0" + rem_s
+    define out: String as text of d + "." + rem_s
+    if neg:
+        set out to "-" + out
+    return out
+
+# ---------- splitting ----------
+
+# Equal split. Leftover cents (total % n) go one each to participants in
+# name-sorted order until the total is exact. Returned amounts align with
+# the given participants order.
+function split_equal(total: Int, participants: List<String>) -> List<Int>:
+    define n: Int as length of participants
+    define base: Int as total / n
+    define rem: Int as total % n
+    define sorted_names: List<String> as participants
+    sort sorted_names ascending
+    define amounts: List<Int> as empty List<Int>
+    for each name in participants:
+        define bonus: Int as 0
+        for each index i item sname in sorted_names:
+            if i < rem and sname == name:
+                set bonus to 1
+        define owed: Int as base + bonus
+        add owed to amounts
+    return amounts
+
+# Proportional split by integer weights. Base shares are floored
+# (total * w / sum(w)); leftover cents go one each to participants in
+# name-sorted order until the total is exact. Weights must be positive.
+function split_shares(total: Int, participants: List<String>, weights: List<Int>) -> List<Int>:
+    define sumw: Int as 0
+    for each w in weights:
+        add w to sumw
+    define amounts: List<Int> as empty List<Int>
+    define assigned: Int as 0
+    for each index i item name in participants:
+        define base: Int as total * weights[i] / sumw
+        add base to amounts
+        add base to assigned
+    define rem: Int as total - assigned
+    define sorted_names: List<String> as participants
+    sort sorted_names ascending
+    for each index i item sname in sorted_names:
+        if i < rem:
+            for each index j item name in participants:
+                if name == sname:
+                    define cur: Int as amounts[j]
+                    set amounts[j] to cur + 1
+    return amounts
+
+# Owed amounts for one expense, aligned with exp.participants.
+function compute_owed(exp: Expense) -> List<Int>:
+    if exp.mode == "exact":
+        return exp.exact
+    if exp.mode == "shares":
+        return split_shares(exp.total, exp.participants, exp.shares)
+    return split_equal(exp.total, exp.participants)
+
+# ---------- balances ----------
+
+# Net balance per person: positive = the person is owed money.
+function compute_balances(expenses: List<Expense>, payments: List<Payment>) -> Map<String, Int>:
+    define net: Map<String, Int> as empty Map<String, Int>
+    for each exp in expenses:
+        define pc: Int as net[exp.payer] default 0
+        set net[exp.payer] to pc + exp.total
+        define owed: List<Int> as compute_owed(exp)
+        define participants: List<String> as exp.participants
+        for each index i item name in participants:
+            define nc: Int as net[name] default 0
+            set net[name] to nc - owed[i]
+    for each p in payments:
+        define fc: Int as net[p.from_p] default 0
+        set net[p.from_p] to fc + p.cents
+        define tc: Int as net[p.to_p] default 0
+        set net[p.to_p] to tc - p.cents
+    return net
+
+# ---------- settle: minimum transfers (greedy min-cash-flow) ----------
+# Repeatedly settle the largest creditor against the largest debtor.
+# Ties are broken by name: scanning the name-sorted key list with strict
+# comparisons picks the alphabetically-first person on a tie.
+
+function settle_transfers(net: Map<String, Int>) -> List<Transfer>:
+    define transfers: List<Transfer> as empty List<Transfer>
+    define bal: Map<String, Int> as empty Map<String, Int>
+    define names: List<String> as empty List<String>
+    for each k in net:
+        add k to names
+        define v: Int as net[k] default 0
+        set bal[k] to v
+    while true:
+        define max_name: String as ""
+        define max_val: Int as 0
+        define min_name: String as ""
+        define min_val: Int as 0
+        for each name in names:
+            define v: Int as bal[name] default 0
+            if v > max_val:
+                set max_val to v
+                set max_name to name
+            if v < min_val:
+                set min_val to v
+                set min_name to name
+        if max_val == 0:
+            break
+        define amount: Int as max_val
+        if -min_val < max_val:
+            set amount to -min_val
+        define t: Transfer as Transfer(from_p=min_name, to_p=max_name, cents=amount)
+        add t to transfers
+        define mc: Int as bal[max_name] default 0
+        set bal[max_name] to mc - amount
+        define nc: Int as bal[min_name] default 0
+        set bal[min_name] to nc + amount
+    return transfers
+
+# Replay transfers onto a balance map (same arithmetic as a `pay` entry).
+function apply_transfers(net: Map<String, Int>, transfers: List<Transfer>) -> Map<String, Int>:
+    define bal: Map<String, Int> as empty Map<String, Int>
+    for each k in net:
+        define v: Int as net[k] default 0
+        set bal[k] to v
+    for each t in transfers:
+        define fc: Int as bal[t.from_p] default 0
+        set bal[t.from_p] to fc + t.cents
+        define tc: Int as bal[t.to_p] default 0
+        set bal[t.to_p] to tc - t.cents
+    return bal
+
+function all_balances_zero(bal: Map<String, Int>) -> Bool:
+    for each k in bal:
+        define v: Int as bal[k] default 0
+        if v != 0:
+            return false
+    return true
+
+# ---------- validation helpers ----------
+
+function person_known(people: List<Person>, name: String) -> Bool:
+    for each p in people:
+        if p.name == name:
+            return true
+    return false
+
+function exact_sums_ok(parts: List<Int>, total: Int) -> Bool:
+    define s: Int as 0
+    for each c in parts:
+        add c to s
+    return s == total
+
+function parts_positive(parts: List<Int>) -> Bool:
+    for each c in parts:
+        if c <= 0:
+            return false
+    return true
+
+# Parse a total-cents argument: returns the value for a positive integer,
+# or -1 for zero, negative, non-integer, or garbage input.
+function parse_positive_cents(text: String) -> Int:
+    define v: Int as integer value of text or else -1
+    if v <= 0:
+        return -1
+    return v
+
+function has_duplicate(names: List<String>) -> Bool:
+    define i: Int as 0
+    while i <= length of names - 1:
+        define k: Int as i + 1
+        while k <= length of names - 1:
+            if names[i] == names[k]:
+                return true
+            add 1 to k
+        add 1 to i
+    return false
+
+# ---------- ledger ----------
+
+# Entry ids are shared across expenses and payments; the next id is one
+# past the largest id seen so far.
+function next_entry_id(expenses: List<Expense>, payments: List<Payment>) -> Int:
+    define mx: Int as 0
+    for each e in expenses:
+        if e.id > mx:
+            set mx to e.id
+    for each p in payments:
+        if p.id > mx:
+            set mx to p.id
+    return mx + 1
+
+function expense_line(e: Expense) -> String:
+    define owed: List<Int> as compute_owed(e)
+    define participants: List<String> as e.participants
+    define detail: String as ""
+    for each index i item name in participants:
+        if i > 0:
+            set detail to detail + "; "
+        define piece: String as name + " owes " + money(owed[i])
+        set detail to detail + piece
+    define line: String as text of e.id + " | expense | " + e.payer + " paid " + money(e.total) + " | " + e.mode + " | " + detail
+    return line
+
+function payment_line(p: Payment) -> String:
+    define line: String as text of p.id + " | payment | " + p.from_p + " paid " + p.to_p + " " + money(p.cents)
+    return line
+
+# Full history sorted by entry id.
+function ledger_lines(expenses: List<Expense>, payments: List<Payment>) -> List<String>:
+    define lines: List<String> as empty List<String>
+    define mx: Int as next_entry_id(expenses, payments) - 1
+    if mx >= 1:
+        for eid from 1 to mx:
+            for each e in expenses:
+                if e.id == eid:
+                    add expense_line(e) to lines
+            for each p in payments:
+                if p.id == eid:
+                    add payment_line(p) to lines
+    return lines
+
+function balance_lines(net: Map<String, Int>) -> List<String>:
+    define lines: List<String> as empty List<String>
+    for each name in net:
+        define c: Int as net[name] default 0
+        define line: String as name + " " + money(c)
+        add line to lines
+    return lines
+
+function settle_lines(net: Map<String, Int>) -> List<String>:
+    define transfers: List<Transfer> as settle_transfers(net)
+    define lines: List<String> as empty List<String>
+    for each t in transfers:
+        define line: String as t.from_p + " -> " + t.to_p + " " + money(t.cents)
+        add line to lines
+    return lines

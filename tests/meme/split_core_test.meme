@@ -1,0 +1,105 @@
+# split_core_test.meme — splitting rules and helpers
+use split_logic
+
+test money_formatting:
+    define no_ints: List<Int> as empty List<Int>
+    assert money(1250) == "12.50"
+    assert money(-1250) == "-12.50"
+    assert money(5) == "0.05"
+    assert money(-5) == "-0.05"
+    assert money(0) == "0.00"
+    assert money(100) == "1.00"
+    assert money(100000) == "1000.00"
+
+test equal_split_exact_division:
+    define no_ints: List<Int> as empty List<Int>
+    define amounts: List<Int> as split_equal(100, ["alice", "bob"])
+    assert amounts[0] == 50
+    assert amounts[1] == 50
+
+test equal_split_remainder_name_order:
+    define no_ints: List<Int> as empty List<Int>
+    # 3 people, 100 cents -> 34/33/33 assigned by name order:
+    # alphabetically first participant receives the first leftover cent.
+    # Argv order here is deliberately scrambled.
+    define amounts: List<Int> as split_equal(100, ["carol", "alice", "bob"])
+    assert amounts[0] == 33
+    assert amounts[1] == 34
+    assert amounts[2] == 33
+
+test equal_split_two_leftover_cents:
+    define no_ints: List<Int> as empty List<Int>
+    define amounts: List<Int> as split_equal(101, ["carol", "alice", "bob"])
+    assert amounts[0] == 33
+    assert amounts[1] == 34
+    assert amounts[2] == 34
+
+test exact_mode_owed:
+    define no_ints: List<Int> as empty List<Int>
+    define exp: Expense as Expense(id=1, payer="alice", total=100, mode="exact", participants=["bob", "carol"], exact=[30, 70], shares=no_ints)
+    define owed: List<Int> as compute_owed(exp)
+    assert owed[0] == 30
+    assert owed[1] == 70
+
+test exact_mode_rejects_mismatch:
+    define no_ints: List<Int> as empty List<Int>
+    assert exact_sums_ok([30, 70], 100) == true
+    assert not (exact_sums_ok([30, 71], 100))
+    assert not (exact_sums_ok([100], 100) == false)
+    assert exact_sums_ok(no_ints, 0) == true
+
+test shares_mode_proportional:
+    define no_ints: List<Int> as empty List<Int>
+    # 100 cents, weights 1:1:2 -> 25/25/50
+    define amounts: List<Int> as split_shares(100, ["alice", "bob", "carol"], [1, 1, 2])
+    assert amounts[0] == 25
+    assert amounts[1] == 25
+    assert amounts[2] == 50
+
+test shares_mode_remainder_name_order:
+    define no_ints: List<Int> as empty List<Int>
+    # 101 cents, equal weights -> base 33 each, 2 leftover cents to the
+    # first two participants in name order (alice, bob).
+    define amounts: List<Int> as split_shares(101, ["carol", "alice", "bob"], [1, 1, 1])
+    assert amounts[0] == 33
+    assert amounts[1] == 34
+    assert amounts[2] == 34
+
+test compute_owed_dispatches_by_mode:
+    define no_ints: List<Int> as empty List<Int>
+    define eq: Expense as Expense(id=1, payer="p", total=90, mode="equal", participants=["a", "b", "c"], exact=no_ints, shares=no_ints)
+    define owed_eq: List<Int> as compute_owed(eq)
+    assert owed_eq[0] == 30
+    assert owed_eq[1] == 30
+    assert owed_eq[2] == 30
+
+test validation_helpers:
+    define no_ints: List<Int> as empty List<Int>
+    define folks: List<Person> as [Person(name="alice"), Person(name="bob")]
+    assert person_known(folks, "alice") == true
+    assert not (person_known(folks, "carol"))
+    assert has_duplicate(["a", "b", "a"])
+    assert not (has_duplicate(["a", "b", "c"]))
+    assert not (parts_positive([1, 0, 2]))
+    assert parts_positive([1, 2, 3]) == true
+
+test entry_id_counter_shared:
+    define no_ints: List<Int> as empty List<Int>
+    define es: List<Expense> as empty List<Expense>
+    define ps: List<Payment> as empty List<Payment>
+    assert next_entry_id(es, ps) == 1
+    define e1: Expense as Expense(id=3, payer="p", total=100, mode="equal", participants=["p"], exact=no_ints, shares=no_ints)
+    add e1 to es
+    assert next_entry_id(es, ps) == 4
+    define p1: Payment as Payment(id=7, from_p="a", to_p="b", cents=10)
+    add p1 to ps
+    assert next_entry_id(es, ps) == 8
+
+test positive_cents_parsing_rejects_zero_negative_garbage:
+    assert parse_positive_cents("100") == 100
+    assert parse_positive_cents("007") == 7
+    assert parse_positive_cents("0") == -1
+    assert parse_positive_cents("-5") == -1
+    assert parse_positive_cents("abc") == -1
+    assert parse_positive_cents("") == -1
+    assert parse_positive_cents("12.5") == -1

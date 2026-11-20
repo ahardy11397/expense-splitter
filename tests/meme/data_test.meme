@@ -1,0 +1,82 @@
+# data_test.meme — JSON persistence, Optional tolerance, corruption
+# Test blocks run in an isolated temp working directory, so scratch files
+# here are unique-named and removed after use.
+use split_logic
+
+test json_expense_row_roundtrip:
+    define no_ints: List<Int> as empty List<Int>
+    define e: Expense as Expense(id=7, payer="ann", total=1250, mode="exact", participants=["ann", "bob"], exact=[1000, 250], shares=no_ints)
+    define row: ExpenseRow as to_row(e)
+    define rows: List<ExpenseRow> as [row]
+    write rows as json to file "split_roundtrip_expenses_1.json"
+    define loaded: Optional<List<ExpenseRow>> as read json records ExpenseRow from file "split_roundtrip_expenses_1.json" or else nothing
+    assert loaded is not nothing
+    define back_rows: List<ExpenseRow> as value of loaded
+    assert length of back_rows == 1
+    define back: Expense as from_row(back_rows[0])
+    assert back.id == 7
+    assert back.payer == "ann"
+    assert back.total == 1250
+    assert back.mode == "exact"
+    assert back.participants[0] == "ann"
+    assert back.participants[1] == "bob"
+    assert back.exact[0] == 1000
+    assert back.exact[1] == 250
+    delete file "split_roundtrip_expenses_1.json"
+
+test json_people_roundtrip:
+    define no_ints: List<Int> as empty List<Int>
+    define folks: List<Person> as [Person(name="ann"), Person(name="bob")]
+    write folks as json to file "split_roundtrip_people_1.json"
+    define loaded: Optional<List<Person>> as read json records Person from file "split_roundtrip_people_1.json" or else nothing
+    assert loaded is not nothing
+    define back: List<Person> as value of loaded
+    assert length of back == 2
+    assert back[0].name == "ann"
+    assert back[1].name == "bob"
+    delete file "split_roundtrip_people_1.json"
+
+test json_payment_roundtrip:
+    define no_ints: List<Int> as empty List<Int>
+    define pays: List<Payment> as [Payment(id=3, from_p="bob", to_p="ann", cents=500)]
+    write pays as json to file "split_roundtrip_payments_1.json"
+    define loaded: Optional<List<Payment>> as read json records Payment from file "split_roundtrip_payments_1.json" or else nothing
+    assert loaded is not nothing
+    define back: List<Payment> as value of loaded
+    assert length of back == 1
+    assert back[0].from_p == "bob"
+    assert back[0].cents == 500
+    delete file "split_roundtrip_payments_1.json"
+
+test missing_file_tolerance:
+    define no_ints: List<Int> as empty List<Int>
+    define loaded_e: Optional<List<ExpenseRow>> as read json records ExpenseRow from file "split_missing_1.json" or else nothing
+    assert loaded_e is nothing
+    define loaded_p: Optional<List<Person>> as read json records Person from file "split_missing_1.json" or else nothing
+    assert loaded_p is nothing
+
+test corrupt_json_tolerance:
+    define no_ints: List<Int> as empty List<Int>
+    write file "split_corrupt_1.json" with "{this is not json"
+    define loaded: Optional<List<ExpenseRow>> as read json records ExpenseRow from file "split_corrupt_1.json" or else nothing
+    assert loaded is nothing
+    delete file "split_corrupt_1.json"
+
+test schema_mismatch_tolerance:
+    define no_ints: List<Int> as empty List<Int>
+    # valid JSON array, but not ExpenseRow records -> clean nothing
+    write file "split_schema_1.json" with "[1, 2, 3]"
+    define loaded: Optional<List<ExpenseRow>> as read json records ExpenseRow from file "split_schema_1.json" or else nothing
+    assert loaded is nothing
+    delete file "split_schema_1.json"
+
+test empty_csv_int_helpers:
+    define no_ints: List<Int> as empty List<Int>
+    define empty_ints: List<Int> as split_ints("")
+    assert length of empty_ints == 0
+    define joined: String as join_ints(no_ints)
+    assert joined == ""
+    define parsed: List<Int> as split_ints("12,0,340")
+    assert parsed[0] == 12
+    assert parsed[1] == 0
+    assert parsed[2] == 340

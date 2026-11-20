@@ -1,0 +1,96 @@
+# settle_test.meme — debt simplification (greedy min-cash-flow)
+use split_logic
+
+test settle_minimum_known_4person:
+    define no_ints: List<Int> as empty List<Int>
+    # e1: carl paid 60 for ann,bob,carl (equal 20 each)
+    # e2: dave paid 30 for ann,bob,dave (equal 10 each)
+    # net: ann -30, bob -30, carl +40, dave +20
+    define e1: Expense as Expense(id=1, payer="carl", total=60, mode="equal", participants=["ann", "bob", "carl"], exact=no_ints, shares=no_ints)
+    define e2: Expense as Expense(id=2, payer="dave", total=30, mode="equal", participants=["ann", "bob", "dave"], exact=no_ints, shares=no_ints)
+    define es: List<Expense> as [e1, e2]
+    define ps: List<Payment> as empty List<Payment>
+    define net: Map<String, Int> as compute_balances(es, ps)
+    define a: Int as net["ann"] default 0
+    define b: Int as net["bob"] default 0
+    define c: Int as net["carl"] default 0
+    define d: Int as net["dave"] default 0
+    assert a == -30
+    assert b == -30
+    assert c == 40
+    assert d == 20
+    # Greedy: largest creditor vs largest debtor, name tie-break; each
+    # transfer goes FROM the debtor TO the creditor.
+    #   1) carl(+40) vs ann(-30): ann -> carl 30  (ann|bob tie -> ann first)
+    #   2) dave(+20) vs bob(-30): bob -> dave 20
+    #   3) carl(+10) vs bob(-10): bob -> carl 10
+    # 3 transfers is the minimum (creditor amounts {40,20} cannot pair
+    # exactly with debtor amounts {30,30} in fewer transfers).
+    define transfers: List<Transfer> as settle_transfers(net)
+    define n_t: Int as length of transfers
+    assert n_t == 3
+    assert transfers[0].from_p == "ann"
+    assert transfers[0].to_p == "carl"
+    assert transfers[0].cents == 30
+    assert transfers[1].from_p == "bob"
+    assert transfers[1].to_p == "dave"
+    assert transfers[1].cents == 20
+    assert transfers[2].from_p == "bob"
+    assert transfers[2].to_p == "carl"
+    assert transfers[2].cents == 10
+
+test settle_replay_zeroes_all_balances:
+    define no_ints: List<Int> as empty List<Int>
+    define e1: Expense as Expense(id=1, payer="carl", total=60, mode="equal", participants=["ann", "bob", "carl"], exact=no_ints, shares=no_ints)
+    define e2: Expense as Expense(id=2, payer="dave", total=30, mode="equal", participants=["ann", "bob", "dave"], exact=no_ints, shares=no_ints)
+    define es: List<Expense> as [e1, e2]
+    define ps: List<Payment> as empty List<Payment>
+    define net: Map<String, Int> as compute_balances(es, ps)
+    define transfers: List<Transfer> as settle_transfers(net)
+    define replay: Map<String, Int> as apply_transfers(net, transfers)
+    assert all_balances_zero(replay)
+
+test settle_simple_star_3_transfers:
+    define no_ints: List<Int> as empty List<Int>
+    # ann paid 100 for ann,bob,carl,dave (equal 25 each)
+    # net: ann +75; bob,carl,dave -25 each
+    # settle: bob->ann 25, carl->ann 25, dave->ann 25 (3 transfers, minimum)
+    define e1: Expense as Expense(id=1, payer="ann", total=100, mode="equal", participants=["ann", "bob", "carl", "dave"], exact=no_ints, shares=no_ints)
+    define es: List<Expense> as [e1]
+    define ps: List<Payment> as empty List<Payment>
+    define net: Map<String, Int> as compute_balances(es, ps)
+    define transfers: List<Transfer> as settle_transfers(net)
+    define n_t: Int as length of transfers
+    assert n_t == 3
+    for each t in transfers:
+        assert t.to_p == "ann"
+        assert t.cents == 25
+
+test settle_already_clear:
+    define no_ints: List<Int> as empty List<Int>
+    define es: List<Expense> as empty List<Expense>
+    define ps: List<Payment> as empty List<Payment>
+    define net: Map<String, Int> as compute_balances(es, ps)
+    define transfers: List<Transfer> as settle_transfers(net)
+    define n_t: Int as length of transfers
+    assert n_t == 0
+    assert all_balances_zero(net)
+
+test settle_with_payment_mixed:
+    define no_ints: List<Int> as empty List<Int>
+    # e1: ann paid 100 for ann,bob (equal 50/50); settlement payment
+    # bob -> ann 20. Net: ann +50-20 = +30, bob -50+20 = -30
+    # -> single transfer bob -> ann 30.
+    define e1: Expense as Expense(id=1, payer="ann", total=100, mode="equal", participants=["ann", "bob"], exact=no_ints, shares=no_ints)
+    define p1: Payment as Payment(id=2, from_p="bob", to_p="ann", cents=20)
+    define es: List<Expense> as [e1]
+    define ps: List<Payment> as [p1]
+    define net: Map<String, Int> as compute_balances(es, ps)
+    define transfers: List<Transfer> as settle_transfers(net)
+    define n_t: Int as length of transfers
+    assert n_t == 1
+    assert transfers[0].from_p == "bob"
+    assert transfers[0].to_p == "ann"
+    assert transfers[0].cents == 30
+    define replay: Map<String, Int> as apply_transfers(net, transfers)
+    assert all_balances_zero(replay)
