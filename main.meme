@@ -1,5 +1,5 @@
 # main.meme — `split` CLI: a thin argv router over split_logic.meme.
-# Every error is one line + exit 1 (via `fail with`). Unknown command
+# Every error is one line + exit 1 (via `print error`). Unknown command
 # prints usage and exits 1. Data lives in data/*.json; missing or corrupt
 # files are handled through Optional reads (never a traceback).
 
@@ -7,7 +7,7 @@ use split_logic
 
 define argc: Int as argument count
 if argc < 2:
-    print "Error: unknown command. Usage: split <add-person|add-expense|pay|balances|settle|ledger> ..."
+    print error "Error: unknown command. Usage: split <add-person|add-expense|pay|balances|settle|ledger> ..."
     exit with code 1
 define cmd: String as argument 1
 
@@ -20,8 +20,7 @@ if loaded_people is not nothing:
 define expenses: List<Expense> as empty List<Expense>
 define loaded_expense_rows: Optional<List<ExpenseRow>> as read json records ExpenseRow from file "data/expenses.json" or else nothing
 if loaded_expense_rows is not nothing:
-    define loaded_rows: List<ExpenseRow> as value of loaded_expense_rows
-    for each row in loaded_rows:
+    for each row in value of loaded_expense_rows:
         define exp: Expense as from_row(row)
         add exp to expenses
 
@@ -33,10 +32,12 @@ if loaded_payments is not nothing:
 match cmd:
     when "add-person":
         if argc != 3:
-            fail with "Error: usage: split add-person <name>"
+            print error "Error: usage: split add-person <name>"
+            exit with code 1
         define name: String as argument 2
         if person_known(people, name):
-            fail with "Error: person already exists: " + name
+            print error "Error: person already exists: " + name
+            exit with code 1
         define p: Person as Person(name=name)
         add p to people
         create directory "data"
@@ -45,13 +46,16 @@ match cmd:
 
     when "add-expense":
         if argc < 4:
-            fail with "Error: usage: split add-expense <payer> <total-cents> <name1> <name2> ... [exact <c1> <c2> ... | shares <w1> <w2> ...]"
+            print error "Error: usage: split add-expense <payer> <total-cents> <name1> <name2> ... [exact <c1> <c2> ... | shares <w1> <w2> ...]"
+            exit with code 1
         define payer: String as argument 2
         define total: Int as parse_positive_cents(argument 3)
         if total < 0:
-            fail with "Error: invalid total-cents (must be a positive integer): " + argument 3
+            print error "Error: invalid total-cents (must be a positive integer): " + argument 3
+            exit with code 1
         if not (person_known(people, payer)):
-            fail with "Error: unknown person: " + payer
+            print error "Error: unknown person: " + payer
+            exit with code 1
         # scan for the optional split-mode keyword (equal | exact | shares);
         # note: a participant cannot be named equal, exact, or shares
         define mode: String as "equal"
@@ -62,7 +66,8 @@ match cmd:
             define a: String as argument i
             if a == "equal" or a == "exact" or a == "shares":
                 if keyword_found:
-                    fail with "Error: duplicate split-mode keyword"
+                    print error "Error: duplicate split-mode keyword"
+                    exit with code 1
                 set keyword_found to true
                 set mode to a
                 set split_at to i
@@ -75,12 +80,15 @@ match cmd:
             add nm to names
             add 1 to j
         if length of names == 0:
-            fail with "Error: at least one participant is required"
+            print error "Error: at least one participant is required"
+            exit with code 1
         if has_duplicate(names):
-            fail with "Error: duplicate participant name"
+            print error "Error: duplicate participant name"
+            exit with code 1
         for each participant in names:
             if not (person_known(people, participant)):
-                fail with "Error: unknown person: " + participant
+                print error "Error: unknown person: " + participant
+                exit with code 1
         # mode-specific numeric arguments (parsed whenever an explicit
         # keyword was present, including `equal`, so trailing garbage is
         # rejected rather than silently ignored)
@@ -90,25 +98,32 @@ match cmd:
             while k <= argc - 1:
                 define v: Int as integer value of argument k or else -1
                 if v < 0:
-                    fail with "Error: invalid number: " + argument k
+                    print error "Error: invalid number: " + argument k
+                    exit with code 1
                 add v to nums
                 add 1 to k
         if mode == "equal":
             if length of nums > 0:
-                fail with "Error: equal mode takes no extra arguments"
+                print error "Error: equal mode takes no extra arguments"
+                exit with code 1
         if mode == "exact":
             if length of nums != length of names:
-                fail with "Error: exact mode needs one amount per participant"
+                print error "Error: exact mode needs one amount per participant"
+                exit with code 1
             for each c in nums:
                 if c < 0:
-                    fail with "Error: exact amounts must be non-negative"
+                    print error "Error: exact amounts must be non-negative"
+                    exit with code 1
             if not (exact_sums_ok(nums, total)):
-                fail with "Error: exact amounts must sum to the total"
+                print error "Error: exact amounts must sum to the total"
+                exit with code 1
         if mode == "shares":
             if length of nums != length of names:
-                fail with "Error: shares mode needs one weight per participant"
+                print error "Error: shares mode needs one weight per participant"
+                exit with code 1
             if not (parts_positive(nums)):
-                fail with "Error: share weights must be positive integers"
+                print error "Error: share weights must be positive integers"
+                exit with code 1
         define eid: Int as next_entry_id(expenses, payments)
         define exp: Expense as Expense(id=eid, payer=payer, total=total, mode=mode, participants=names, exact=nums, shares=nums)
         add exp to expenses
@@ -122,18 +137,23 @@ match cmd:
 
     when "pay":
         if argc != 5:
-            fail with "Error: usage: split pay <from> <to> <cents>"
+            print error "Error: usage: split pay <from> <to> <cents>"
+            exit with code 1
         define from_p: String as argument 2
         define to_p: String as argument 3
         define cents: Int as integer value of argument 4 or else -1
         if cents <= 0:
-            fail with "Error: payment cents must be a positive integer: " + argument 4
+            print error "Error: payment cents must be a positive integer: " + argument 4
+            exit with code 1
         if not (person_known(people, from_p)):
-            fail with "Error: unknown person: " + from_p
+            print error "Error: unknown person: " + from_p
+            exit with code 1
         if not (person_known(people, to_p)):
-            fail with "Error: unknown person: " + to_p
+            print error "Error: unknown person: " + to_p
+            exit with code 1
         if from_p == to_p:
-            fail with "Error: from and to must be different people"
+            print error "Error: from and to must be different people"
+            exit with code 1
         define pid: Int as next_entry_id(expenses, payments)
         define pay: Payment as Payment(id=pid, from_p=from_p, to_p=to_p, cents=cents)
         add pay to payments
@@ -143,8 +163,7 @@ match cmd:
 
     when "balances":
         define net: Map<String, Int> as compute_balances(expenses, payments)
-        define lines: List<String> as balance_lines(net)
-        for each line in lines:
+        for each line in balance_lines(net):
             print line
 
     when "settle":
@@ -153,8 +172,7 @@ match cmd:
         if length of transfers == 0:
             print "All balances are settled."
         else:
-            define lines: List<String> as settle_lines(net)
-            for each line in lines:
+            for each line in settle_lines(net):
                 print line
             define n_t: Int as length of transfers
             print "Settled with " + text of n_t + " transfers."
@@ -172,5 +190,5 @@ match cmd:
                 print line
 
     otherwise:
-        print "Error: unknown command '" + cmd + "'. Usage: split <add-person|add-expense|pay|balances|settle|ledger> ..."
+        print error "Error: unknown command '" + cmd + "'. Usage: split <add-person|add-expense|pay|balances|settle|ledger> ..."
         exit with code 1

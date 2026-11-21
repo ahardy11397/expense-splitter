@@ -1,5 +1,5 @@
 # settle_test.meme — debt simplification (greedy min-cash-flow)
-use split_logic
+use ../../split_logic
 
 test settle_minimum_known_4person:
     define no_ints: List<Int> as empty List<Int>

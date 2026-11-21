@@ -1,5 +1,5 @@
 # split_core_test.meme — splitting rules and helpers
-use split_logic
+use ../../split_logic
 
 test money_formatting:
     define no_ints: List<Int> as empty List<Int>

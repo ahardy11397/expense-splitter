@@ -1,5 +1,5 @@
 # netting_test.meme — multi-expense and payment netting
-use split_logic
+use ../../split_logic
 
 test multi_expense_netting:
     define no_ints: List<Int> as empty List<Int>

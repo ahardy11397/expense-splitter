@@ -1,7 +1,7 @@
 # data_test.meme — JSON persistence, Optional tolerance, corruption
 # Test blocks run in an isolated temp working directory, so scratch files
 # here are unique-named and removed after use.
-use split_logic
+use ../../split_logic
 
 test json_expense_row_roundtrip:
     define no_ints: List<Int> as empty List<Int>

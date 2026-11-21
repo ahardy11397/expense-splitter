@@ -1,7 +1,7 @@
 # split_logic.meme — shared-expense splitter logic.
 # Pure module: records + functions only (no top-level statements).
-# All money is integer cents. Display strings are built with integer
-# arithmetic only (money/1) — no floats anywhere.
+# All money is integer cents. Display strings are built with
+# format float of cents / 100.0 with 2 decimals.
 
 record Person:
     name: String
@@ -67,19 +67,7 @@ function from_row(r: ExpenseRow) -> Expense:
 # ---------- display ----------
 
 function money(cents: Int) -> String:
-    define neg: Bool as cents < 0
-    define abs_c: Int as cents
-    if neg:
-        set abs_c to -cents
-    define d: Int as abs_c / 100
-    define rem: Int as abs_c % 100
-    define rem_s: String as text of rem
-    if rem < 10:
-        set rem_s to "0" + rem_s
-    define out: String as text of d + "." + rem_s
-    if neg:
-        set out to "-" + out
-    return out
+    return format float of cents / 100.0 with 2 decimals
 
 # ---------- splitting ----------
 
@@ -143,8 +131,7 @@ function compute_balances(expenses: List<Expense>, payments: List<Payment>) -> M
         define pc: Int as net[exp.payer] default 0
         set net[exp.payer] to pc + exp.total
         define owed: List<Int> as compute_owed(exp)
-        define participants: List<String> as exp.participants
-        for each index i item name in participants:
+        for each index i item name in exp.participants:
             define nc: Int as net[name] default 0
             set net[name] to nc - owed[i]
     for each p in payments:
@@ -268,9 +255,8 @@ function next_entry_id(expenses: List<Expense>, payments: List<Payment>) -> Int:
 
 function expense_line(e: Expense) -> String:
     define owed: List<Int> as compute_owed(e)
-    define participants: List<String> as e.participants
     define detail: String as ""
-    for each index i item name in participants:
+    for each index i item name in e.participants:
         if i > 0:
             set detail to detail + "; "
         define piece: String as name + " owes " + money(owed[i])
@@ -305,9 +291,8 @@ function balance_lines(net: Map<String, Int>) -> List<String>:
     return lines
 
 function settle_lines(net: Map<String, Int>) -> List<String>:
-    define transfers: List<Transfer> as settle_transfers(net)
     define lines: List<String> as empty List<String>
-    for each t in transfers:
+    for each t in settle_transfers(net):
         define line: String as t.from_p + " -> " + t.to_p + " " + money(t.cents)
         add line to lines
     return lines
